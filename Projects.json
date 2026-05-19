@@ -1,0 +1,9 @@
+{
+  "source": "/mnt/Projects",
+  "destination": "/mnt/Kessel/TestBackup/",
+  "last_browse_dir": "/mnt/Projects",
+  "excludes": "#Backup",
+  "workers": 8,
+  "created_at": "2026-05-19T17:42:37",
+  "app": "NAS Backup Manager"
+}
