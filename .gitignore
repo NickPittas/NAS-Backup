@@ -5,4 +5,5 @@ __pycache__/
 .venv/
 venv/
 backup_logs/
+.backup_logs/
 .DS_Store

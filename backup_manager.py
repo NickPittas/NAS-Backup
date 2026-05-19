@@ -28,6 +28,10 @@ class BackupConfig:
         self.last_browse_dir = ""
         self.excludes = ""
         self.workers = 4
+        self.schedule_enabled = False
+        self.schedule_mode = "interval"
+        self.schedule_interval_minutes = 60
+        self.schedule_time = "02:00"
 
     def to_json(self):
         return {
@@ -36,6 +40,10 @@ class BackupConfig:
             "last_browse_dir": self.last_browse_dir,
             "excludes": self.excludes,
             "workers": self.workers,
+            "schedule_enabled": self.schedule_enabled,
+            "schedule_mode": self.schedule_mode,
+            "schedule_interval_minutes": self.schedule_interval_minutes,
+            "schedule_time": self.schedule_time,
         }
 
     @classmethod
@@ -46,10 +54,18 @@ class BackupConfig:
         cfg.last_browse_dir = data.get("last_browse_dir", "")
         cfg.excludes = data.get("excludes", "")
         cfg.workers = int(data.get("workers", 4) or 4)
+        cfg.schedule_enabled = bool(data.get("schedule_enabled", False))
+        cfg.schedule_mode = data.get("schedule_mode", "interval")
+        cfg.schedule_interval_minutes = int(data.get("schedule_interval_minutes", 60) or 60)
+        cfg.schedule_time = data.get("schedule_time", "02:00")
         return cfg
 
 
 # ── Engine ───────────────────────────────────────────────────────────────────
+
+
+def shell_quote(value):
+    return "'" + str(value).replace("'", "'\\''") + "'"
 
 
 class BackupEngine:
@@ -77,10 +93,7 @@ class BackupEngine:
             self._log("Error", f"Source directory not found: {src}")
             return []
 
-        find_cmd = (
-            f'find "{src}" -type f \\( -iname "*.aep" -o -iname "*.nk" \\) '
-            f"-print0 2>/dev/null"
-        )
+        find_cmd = self._build_find_command(src)
 
         # --- Collect all matching paths (shows live count) ---
         self._log("Info", "Collecting files...")
@@ -112,24 +125,23 @@ class BackupEngine:
         self._log("Info", f"Found {total} file(s). Checking against destination...")
         self._update_progress("scanning", 0, total)
 
-        # --- Diff each file against destination ---
+        # --- Diff each file against destination in parallel ---
         changes = []
-        for i, file_path in enumerate(all_files):
-            if not self.is_running:
-                break
-            self._wait_if_paused()
-
-            self.stats["scanned"] += 1
-            self._update_progress("scanning", self.stats["scanned"], total)
-
-            rel_path = os.path.relpath(file_path, src)
-            dst_path = dst / rel_path
-
-            if self._should_copy(file_path, dst_path):
-                changes.append(
-                    {"src": file_path, "dst": dst_path, "rel": rel_path}
-                )
-                self.stats["to_copy"] += 1
+        workers = max(1, min(int(getattr(self.config, "workers", 4) or 4), 16))
+        completed = 0
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(self._diff_one, file_path, src, dst) for file_path in all_files]
+            for future in as_completed(futures):
+                if not self.is_running:
+                    break
+                self._wait_if_paused()
+                completed += 1
+                item = future.result()
+                self.stats["scanned"] = completed
+                if item:
+                    changes.append(item)
+                    self.stats["to_copy"] += 1
+                self._update_progress("scanning", completed, total)
 
         self._log(
             "Info",
@@ -137,6 +149,28 @@ class BackupEngine:
             f"{self.stats['scanned'] - self.stats['to_copy']} up-to-date.",
         )
         return changes
+
+    def _build_find_command(self, src):
+        src_q = shell_quote(src)
+        prune_names = []
+        for pat in self.exclude_patterns:
+            if "/" not in pat and not any(ch in pat for ch in "*?["):
+                prune_names.append(pat)
+        prune_expr = ""
+        if prune_names:
+            parts = " -o ".join(f"-iname {shell_quote(name)}" for name in prune_names)
+            prune_expr = f" \\( -type d \\( {parts} \\) -prune \\) -o"
+        return (
+            f"find {src_q}{prune_expr} -type f "
+            f"\\( -iname '*.aep' -o -iname '*.nk' \\) -print0 2>/dev/null"
+        )
+
+    def _diff_one(self, file_path, src, dst):
+        rel_path = os.path.relpath(file_path, src)
+        dst_path = dst / rel_path
+        if self._should_copy(file_path, dst_path):
+            return {"src": file_path, "dst": dst_path, "rel": rel_path}
+        return None
 
     def _is_excluded(self, rel_path):
         """Match excludes against full path and each folder/file component.
@@ -670,15 +704,49 @@ class BackupApp:
 # ── Headless CLI ─────────────────────────────────────────────────────────────
 
 
+def write_run_report(log_file, config, engine, changes, elapsed, dry_run=False):
+    with open(log_file, "a") as lf:
+        lf.write("--- Summary ---\n")
+        lf.write(f"Elapsed seconds: {elapsed:.1f}\n")
+        lf.write(f"Source: {config.source}\n")
+        lf.write(f"Destination: {config.destination}\n")
+        lf.write(f"Excludes: {config.excludes or '(none)'}\n")
+        lf.write(f"Dry run: {dry_run}\n")
+        lf.write(f"Scanned: {engine.stats['scanned']}\n")
+        lf.write(f"Skipped by excludes: {engine.stats.get('skipped', 0)}\n")
+        lf.write(f"Needed copy: {engine.stats['to_copy']}\n")
+        lf.write(f"Copied: {engine.stats.get('copied', 0)}\n")
+        lf.write(f"Renamed existing: {engine.stats['renamed']}\n")
+        lf.write(f"Errors: {engine.stats['errors']}\n")
+        lf.write("--- Process summary ---\n")
+        lf.write("File lists intentionally omitted; this report records process totals only.\n")
+
+
+def app_log_dir():
+    return Path(__file__).resolve().parent / ".backup_logs"
+
+
+def make_log_file():
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = app_log_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / f"backup_{run_id}.log"
+
+
 def headless_dry_run(source, destination, excludes=""):
     config = BackupConfig()
     config.source = source
     config.destination = destination
     config.excludes = excludes
+    log_file = make_log_file()
+    start = time.time()
 
     def on_log(level, msg):
-        ts = datetime.now().strftime("%H:%M:%S")
-        print(f"[{ts}] {level}: {msg}")
+        ts = datetime.now().isoformat(timespec="seconds")
+        line = f"[{ts}] {level}: {msg}"
+        print(line)
+        with open(log_file, "a") as lf:
+            lf.write(line + "\n")
 
     def on_progress(phase, value, total=None):
         if phase == "collecting":
@@ -692,12 +760,15 @@ def headless_dry_run(source, destination, excludes=""):
 
     engine = BackupEngine(config, callbacks={"log": on_log, "progress": on_progress})
     changes = engine.scan()
+    elapsed = time.time() - start
+    write_run_report(log_file, config, engine, changes, elapsed, dry_run=True)
 
     print(f"\n{'='*60}")
     print(f"Scanned:  {engine.stats['scanned']}")
     print(f"To copy:  {engine.stats['to_copy']}")
     print(f"Errors:   {engine.stats['errors']}")
     print(f"Renamed:  {engine.stats['renamed']}")
+    print(f"Report:   {log_file}")
     print(f"{'='*60}")
     if changes:
         print(f"\nFiles to copy ({len(changes)}):")
@@ -712,10 +783,7 @@ def run_job(job_path, dry_run=False):
     with open(job_path, "r") as f:
         config = BackupConfig.from_json(json.load(f))
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_dir = Path(job_path).with_suffix("").parent / "backup_logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"backup_{run_id}.log"
+    log_file = make_log_file()
     start = time.time()
 
     def write_log(line):
@@ -753,12 +821,8 @@ def run_job(job_path, dry_run=False):
     write_log(f"Copied: {engine.stats.get('copied', 0)}")
     write_log(f"Renamed existing: {engine.stats['renamed']}")
     write_log(f"Errors: {engine.stats['errors']}")
-    write_log("--- Copied files ---")
-    for rel in engine.copied_files:
-        write_log(rel)
-    write_log("--- Excluded/skipped files ---")
-    for rel in engine.skipped_files:
-        write_log(rel)
+    write_log("--- Process summary ---")
+    write_log("File lists intentionally omitted; this report records process totals only.")
     write_log(f"Log file: {log_file}")
     return 1 if engine.stats["errors"] else 0
 
