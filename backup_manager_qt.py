@@ -117,16 +117,34 @@ class BackupManagerQt(QMainWindow):
         self.scheduler_timer.start(30000)
         self._refresh_schedule()
 
-    def _make_card(self, title):
+    def _make_card(self, title, collapsed=False):
         card = QFrame()
         card.setObjectName("Card")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 16, 18, 18)
-        layout.setSpacing(12)
-        label = QLabel(title)
-        label.setObjectName("CardTitle")
-        layout.addWidget(label)
-        return card, layout
+        outer = QVBoxLayout(card)
+        outer.setContentsMargins(14, 10, 14, 14)
+        outer.setSpacing(8)
+
+        header = QPushButton()
+        header.setObjectName("CardHeader")
+        header.setCheckable(True)
+        header.setChecked(not collapsed)
+        header.setText(("▾  " if not collapsed else "▸  ") + title)
+        header.setMinimumHeight(28)
+        outer.addWidget(header)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(4, 4, 4, 0)
+        content_layout.setSpacing(10)
+        content.setVisible(not collapsed)
+        outer.addWidget(content)
+
+        def toggle(checked):
+            content.setVisible(checked)
+            header.setText(("▾  " if checked else "▸  ") + title)
+
+        header.toggled.connect(toggle)
+        return card, content_layout
 
     def _build_ui(self):
         central = QWidget()
@@ -192,7 +210,7 @@ class BackupManagerQt(QMainWindow):
         settings_layout.addLayout(form)
         root.addWidget(settings_card)
 
-        schedule_card, schedule_layout = self._make_card("Schedule")
+        schedule_card, schedule_layout = self._make_card("Schedule", collapsed=True)
         schedule_grid = QGridLayout()
         schedule_grid.setHorizontalSpacing(12)
         schedule_grid.setVerticalSpacing(10)
@@ -249,19 +267,23 @@ class BackupManagerQt(QMainWindow):
         progress_card, progress_layout = self._make_card("Progress")
         self.scan_progress = QProgressBar()
         self.copy_progress = QProgressBar()
-        self.scan_progress.setMinimumHeight(30)
-        self.copy_progress.setMinimumHeight(30)
+        self.scan_progress.setMinimumHeight(24)
+        self.copy_progress.setMinimumHeight(24)
         self.scan_status = QLabel("Scan idle")
         self.scan_status.setObjectName("HelperText")
         self.copy_status = QLabel("Copy idle")
         self.copy_status.setObjectName("HelperText")
-        progress_layout.addWidget(QLabel("Scan"))
-        progress_layout.addWidget(self.scan_progress)
-        progress_layout.addWidget(self.scan_status)
-        progress_layout.addSpacing(8)
-        progress_layout.addWidget(QLabel("Copy"))
-        progress_layout.addWidget(self.copy_progress)
-        progress_layout.addWidget(self.copy_status)
+        progress_grid = QGridLayout()
+        progress_grid.setHorizontalSpacing(12)
+        progress_grid.setVerticalSpacing(6)
+        progress_grid.addWidget(QLabel("Scan"), 0, 0)
+        progress_grid.addWidget(self.scan_progress, 0, 1)
+        progress_grid.addWidget(self.scan_status, 0, 2)
+        progress_grid.addWidget(QLabel("Copy"), 1, 0)
+        progress_grid.addWidget(self.copy_progress, 1, 1)
+        progress_grid.addWidget(self.copy_status, 1, 2)
+        progress_grid.setColumnStretch(1, 1)
+        progress_layout.addLayout(progress_grid)
         root.addWidget(progress_card)
 
         splitter = QSplitter(Qt.Vertical)
@@ -283,7 +305,7 @@ class BackupManagerQt(QMainWindow):
         log_layout.addWidget(self.log_box)
         splitter.addWidget(table_card)
         splitter.addWidget(log_card)
-        splitter.setSizes([460, 190])
+        splitter.setSizes([620, 220])
         root.addWidget(splitter, 1)
 
         self.statusBar().showMessage("Ready")
@@ -349,6 +371,16 @@ class BackupManagerQt(QMainWindow):
             }
             QPushButton:hover { background: #334155; }
             QPushButton:disabled { color: #64748b; background: #111827; border-color: #1f2937; }
+            QPushButton#CardHeader {
+                background: transparent;
+                border: none;
+                color: #f8fafc;
+                text-align: left;
+                padding: 2px 0;
+                font-size: 15px;
+                font-weight: 800;
+            }
+            QPushButton#CardHeader:hover { color: #38bdf8; background: transparent; }
             QPushButton#PrimaryButton { background: #2563eb; border-color: #3b82f6; color: white; }
             QPushButton#PrimaryButton:hover { background: #1d4ed8; }
             QPushButton#SuccessButton { background: #16a34a; border-color: #22c55e; color: white; }
