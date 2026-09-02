@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=NAS Backup Manager
+Comment=Scan, filter, copy, and automate backup jobs
+Exec=backup_manager_qt
+Icon=nas-backup-manager
+Categories=Utility;System;
+Terminal=false

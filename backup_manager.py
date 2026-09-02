@@ -30,7 +30,7 @@ class BackupConfig:
         self.workers = 4
         self.schedule_enabled = False
         self.schedule_mode = "interval"
-        self.schedule_interval_minutes = 60
+        self.schedule_interval_minutes = 240
         self.schedule_time = "02:00"
 
     def to_json(self):
@@ -56,7 +56,7 @@ class BackupConfig:
         cfg.workers = int(data.get("workers", 4) or 4)
         cfg.schedule_enabled = bool(data.get("schedule_enabled", False))
         cfg.schedule_mode = data.get("schedule_mode", "interval")
-        cfg.schedule_interval_minutes = int(data.get("schedule_interval_minutes", 60) or 60)
+        cfg.schedule_interval_minutes = int(data.get("schedule_interval_minutes", 240) or 240)
         cfg.schedule_time = data.get("schedule_time", "02:00")
         return cfg
 
@@ -723,7 +723,7 @@ def write_run_report(log_file, config, engine, changes, elapsed, dry_run=False):
 
 
 def app_log_dir():
-    return Path(__file__).resolve().parent / ".backup_logs"
+    return CONFIG_DIR / "logs"
 
 
 def make_log_file():

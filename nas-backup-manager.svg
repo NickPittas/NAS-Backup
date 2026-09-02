@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- Drive body -->
+  <rect x="48" y="64" width="160" height="128" rx="16" fill="#e0e7ff" opacity="0.95"/>
+  <!-- Drive bay line -->
+  <line x1="48" y1="128" x2="208" y2="128" stroke="#94a3b8" stroke-width="2"/>
+  <!-- Status LEDs -->
+  <circle cx="80" cy="96" r="10" fill="#22c55e"/>
+  <circle cx="112" cy="96" r="10" fill="#38bdf8"/>
+  <!-- Drive slot -->
+  <rect x="68" y="144" width="120" height="8" rx="4" fill="#64748b"/>
+  <rect x="68" y="164" width="120" height="8" rx="4" fill="#64748b"/>
+</svg>

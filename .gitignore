@@ -7,3 +7,14 @@ venv/
 backup_logs/
 .backup_logs/
 .DS_Store
+
+# AppImage build
+build/
+dist/
+*.spec
+*.AppImage
+*.AppDir/
+
+# Pix Agent
+.pi/
+.pi-lens/

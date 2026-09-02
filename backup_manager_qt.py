@@ -108,9 +108,11 @@ class BackupManagerQt(QMainWindow):
         self.scheduler_pending_copy = False
         self.scheduler_copy_running = False
         self.start_copy_after_thread_finish = False
+        self._auto_save_active = False
         self._load_config()
         self._build_ui()
         self._apply_config_to_ui()
+        self._auto_save_active = True
         self._apply_theme()
         self.scheduler_timer = QTimer(self)
         self.scheduler_timer.timeout.connect(self._check_schedule)
@@ -228,6 +230,15 @@ class BackupManagerQt(QMainWindow):
         self.schedule_mode.currentIndexChanged.connect(self._refresh_schedule)
         self.schedule_interval.valueChanged.connect(self._refresh_schedule)
         self.schedule_time.timeChanged.connect(self._refresh_schedule)
+        # Auto-save settings on any change
+        self.source_edit.editingFinished.connect(self._auto_save)
+        self.dest_edit.editingFinished.connect(self._auto_save)
+        self.excludes_edit.editingFinished.connect(self._auto_save)
+        self.workers_spin.valueChanged.connect(self._auto_save)
+        self.schedule_enabled.toggled.connect(self._auto_save)
+        self.schedule_mode.currentIndexChanged.connect(self._auto_save)
+        self.schedule_interval.valueChanged.connect(self._auto_save)
+        self.schedule_time.timeChanged.connect(self._auto_save)
         schedule_grid.addWidget(self.schedule_enabled, 0, 0)
         schedule_grid.addWidget(QLabel("Mode"), 0, 1)
         schedule_grid.addWidget(self.schedule_mode, 0, 2)
@@ -475,14 +486,21 @@ class BackupManagerQt(QMainWindow):
         return cfg
 
     def _apply_config_to_ui(self):
+        # Block signals so widget changes don't trigger _refresh_schedule
+        # (which calls _config_from_ui and clobbers self.config from half-updated widgets)
+        for w in (self.schedule_enabled, self.schedule_mode, self.schedule_interval, self.schedule_time):
+            w.blockSignals(True)
         self.source_edit.setText(self.config.source)
         self.dest_edit.setText(self.config.destination)
         self.excludes_edit.setText(self.config.excludes)
         self.workers_spin.setValue(max(1, min(int(self.config.workers or 4), 16)))
         self.schedule_enabled.setChecked(bool(getattr(self.config, "schedule_enabled", False)))
         self.schedule_mode.setCurrentIndex(1 if getattr(self.config, "schedule_mode", "interval") == "daily" else 0)
-        self.schedule_interval.setValue(max(1, int(getattr(self.config, "schedule_interval_minutes", 60) or 60)))
+        self.schedule_interval.setValue(max(1, int(getattr(self.config, "schedule_interval_minutes", 240) or 240)))
         self.schedule_time.setTime(QTime.fromString(getattr(self.config, "schedule_time", "02:00"), "HH:mm"))
+        for w in (self.schedule_enabled, self.schedule_mode, self.schedule_interval, self.schedule_time):
+            w.blockSignals(False)
+        self._refresh_schedule()
 
     def _validate_paths(self):
         if not self.source_edit.text().strip() or not self.dest_edit.text().strip():
@@ -491,7 +509,7 @@ class BackupManagerQt(QMainWindow):
         return True
 
     def _start_run_log(self, prefix):
-        log_dir = Path(__file__).resolve().parent / ".backup_logs"
+        log_dir = CONFIG_DIR / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         self.current_log_file = log_dir / f"{prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         self.run_start_time = time.time()
@@ -721,6 +739,10 @@ class BackupManagerQt(QMainWindow):
                     self.config = BackupConfig.from_json(json.load(f))
             except Exception:
                 self.config = BackupConfig()
+
+    def _auto_save(self):
+        if self._auto_save_active:
+            self._save_config()
 
     def _save_config(self):
         self.config = self._config_from_ui()
